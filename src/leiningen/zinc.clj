@@ -10,13 +10,14 @@
             [zinc.lein :as lein])
   (:import (sbt.internal.inc ZincUtil Locate LoggedReporter ScalaInstance AnalyzingCompiler)
            (xsbti.compile Inputs Setup IncOptions IncrementalCompiler PerClasspathEntryLookup CompilerCache ZincCompilerUtil ClasspathOptionsUtil CompileOptions CompileOrder AnalysisStore FileAnalysisStore PreviousResult)
-           (sbt Level)
            (scala Option Function1)
            (java.util Optional)
            (xsbti T2)
            (java.net URLClassLoader URL)
            (sbt.internal.inc.classpath ClasspathUtilities)
-           (java.io File)))
+           (java.io File PrintStream)
+           (java.util.function Function)
+           (sbt.internal.util ConsoleLogger)))
 (def ^:dynamic scala-version "2.12.8")
 (def ^:dynamic zinc-version "1.2.5")
 
@@ -31,7 +32,7 @@
   (let [deps (:dependencies project)]
     (map (fn [[id version]]
            (core/to-file (lein/maven-local-repo-path
-                           id version)))))
+                           (name id) version))) deps))
   )
 (def library-jar
   (core/to-file (lein/maven-local-repo-path
@@ -59,10 +60,7 @@
   (if (nil? arg) (Option/apply nil) (new scala.Some arg)))
 
 (defn zinc-logger "Instantiate zinc logger." [project]
-  (let [{:keys [level colorize?]
-         :or   {level     "info"
-                colorize? false}} (:logging (:zinc-options project))]
-    (Util/logger false (Level/withName level) colorize?)))
+  (ConsoleLogger/apply (PrintStream. System/out)))
 
 (defn zincCompiler "Instantiates zinc compiler."
   []
@@ -74,7 +72,7 @@
   paths should be used to specify the source paths as it is recognized by 
   IDEs such as IntelliJ."
   [project]
-  (into #{} (cs/union (:source-paths project)
+  (into #{} (cs/union #_(:source-paths project)
                       (:java-source-paths project)
                       [(str (:root project) "/src/java")
                        (str (:root project) "/src/scala")])))
@@ -114,13 +112,13 @@
 
 (defn options [class-paths sources class-directory scala-options java-options]
   (CompileOptions/of
-    (into-array String class-paths)
-    (into-array String sources)
+    (into-array File class-paths)
+    (into-array File sources)
     class-directory
     (into-array String scala-options)
     (into-array String java-options)
     100
-    (reify Function1 (apply [this pos] pos))
+    (Function/identity)
     CompileOrder/Mixed))
 
 (defn zincInputs "Instantiates zinc inputs." [project test?]
@@ -157,8 +155,8 @@
         compilers (compilers scala-instance scala-compilers)
         class-paths (map #(core/to-file %)
                          (core/to-seq classpath ":"))
-        options (options class-paths
-                         (map core/to-file sources)
+        options (options (conj class-paths (core/to-file classes))
+                         (map #(core/to-file %) sources)
                          (core/to-file classes)
                          scalac-options
                          javac-options)
@@ -177,8 +175,8 @@
                                Optional/of))
                          (PreviousResult/of (Optional/empty) (Optional/empty))))]
     (main/debug "classpath: " class-paths)
-    (main/debug "sources: " sources)
-    (main/debug "test-sources: " test-sources)
+    (main/info "sources: " sources)
+    (main/info "test-sources: " test-sources)
     (main/debug "analysis-cache: " analysis-cache)
     (main/debug "analysis-map: " analysis-map)
 
@@ -186,28 +184,6 @@
          (catch Exception e
            (main/abort "Invalid parameter. " (.getMessage e))))))
 
-(defn inc-options "Generates options for sbt incremental compiler." [project]
-  (let [defaultIncOptions (IncOptions/create)
-        {:keys [transitive-step recompile-all-fraction relations-debug?
-                api-debug? api-diff-context-size api-dump-directory
-                transactional? backup recompile-on-macro-def name-hashing?]
-         :or   {transitive-step        (.transitiveStep defaultIncOptions)
-                recompile-all-fraction (.recompileAllFraction defaultIncOptions)
-                relations-debug?       (.relationsDebug defaultIncOptions)
-                api-debug?             (.apiDebug defaultIncOptions)
-                api-diff-context-size  (.apiDiffContextSize defaultIncOptions)
-                api-dump-directory     nil
-                transactional?         false
-                backup                 "target/backup"
-                recompile-on-macro-def (.recompileOnMacroDef defaultIncOptions)
-                name-hashing?          (.nameHashing defaultIncOptions)
-                }}
-        (:incremental (:zinc-options project))]
-    (new IncOptions transitive-step
-         recompile-all-fraction relations-debug? api-debug?
-         api-diff-context-size (option (core/to-file api-dump-directory))
-         transactional? (option (core/to-file backup)) recompile-on-macro-def
-         name-hashing?)))
 
 (defn- do-compile [project test?]
   (let [logger (zinc-logger project)]
@@ -274,8 +250,8 @@
                      ['org.scala-lang/scala-compiler scala-version]
                      ['org.scala-lang/scala-library scala-version]
                      ['org.scala-lang/scala-reflect scala-version]
-                     ['com.typesafe.sbt/sbt-interface sbt-version]
-                     ['com.typesafe.sbt/compiler-interface sbt-version
+                     ['org.scala-sbt/launcher-interface "1.1.3"]
+                     ['org.scala-sbt/compiler-interface sbt-version
                       :classifier "sources"]]
      :sbt-version   sbt-version
      :scala-version scala-version
