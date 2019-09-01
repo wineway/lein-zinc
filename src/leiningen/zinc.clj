@@ -9,7 +9,7 @@
             [zinc.core :as core]
             [zinc.lein :as lein])
   (:import (sbt.internal.inc ZincUtil Locate LoggedReporter ScalaInstance AnalyzingCompiler)
-           (xsbti.compile Inputs Setup IncOptions IncrementalCompiler PerClasspathEntryLookup CompilerCache ZincCompilerUtil ClasspathOptionsUtil)
+           (xsbti.compile Inputs Setup IncOptions IncrementalCompiler PerClasspathEntryLookup CompilerCache ZincCompilerUtil ClasspathOptionsUtil CompileOptions CompileOrder AnalysisStore FileAnalysisStore PreviousResult)
            (sbt Level)
            (scala Option Function1)
            (java.util Optional)
@@ -17,7 +17,32 @@
            (java.net URLClassLoader URL)
            (sbt.internal.inc.classpath ClasspathUtilities)
            (java.io File)))
+(def ^:dynamic scala-version "2.12.8")
+(def ^:dynamic zinc-version "1.2.5")
 
+(def compile-jar
+  (core/to-file (lein/maven-local-repo-path
+                  "org.scala-lang/scala-compiler" scala-version)))
+
+(defn analysis-store [cache-file]
+  (AnalysisStore/getCachedStore (FileAnalysisStore/getDefault cache-file)))
+
+(defn extra-jar [project]
+  (let [deps (:dependencies project)]
+    (map (fn [[id version]]
+           (core/to-file (lein/maven-local-repo-path
+                           id version)))))
+  )
+(def library-jar
+  (core/to-file (lein/maven-local-repo-path
+                  "org.scala-lang/scala-library" scala-version)))
+(def compiler-bridge-jar
+  (core/to-file (lein/maven-local-repo-path
+                  "org.scala-sbt/zinc_2.12" zinc-version)))
+(def reflect-jar
+  (core/to-file
+    (lein/maven-local-repo-path
+      "org.scala-lang/scala-reflect" scala-version)))
 
 (def lookup (reify PerClasspathEntryLookup
               (analysis [this classpathEntry]
@@ -28,26 +53,10 @@
 (def default-sources ["src/scala" "src/java"])
 (def default-test-sources ["test/scala" "test/java"])
 
-(defn zinc-setup "Instantiates zinc setup object." [project]
-  (let [{:keys [sbt-version scala-version fork-java?]} project]
-    (Setup/create
-      (core/to-file (lein/maven-local-repo-path
-                      "org.scala-lang/scala-compiler" scala-version))
-      (core/to-file (lein/maven-local-repo-path
-                      "org.scala-lang/scala-library" scala-version))
-      [(core/to-file
-         (lein/maven-local-repo-path
-           "org.scala-lang/scala-reflect" scala-version))]
-      (core/to-file (lein/maven-local-repo-path
-                      "com.typesafe.sbt/sbt-interface" sbt-version))
-      (core/to-file (lein/maven-local-repo-path
-                      "com.typesafe.sbt/compiler-interface" sbt-version "sources"))
-      (core/to-file (core/java-home))
-      fork-java?)))
 
 (defn- option "Returns scala.Some(arg) if arg is not nil else scala.None."
   [arg]
-  (if (nil? arg) (scala.Option/apply nil) (new scala.Some arg)))
+  (if (nil? arg) (Option/apply nil) (new scala.Some arg)))
 
 (defn zinc-logger "Instantiate zinc logger." [project]
   (let [{:keys [level colorize?]
@@ -72,8 +81,7 @@
 
 (def tmpdir (System/getProperty "java.io.tmpdir"))
 
-(defn scala-instance [scala-version library-jar compile-jar
-                      reflect-jar extra-jars]
+(defn scala-instance [extra-jars]
   (ScalaInstance.
     scala-version
     (URLClassLoader. (into-array URL
@@ -86,7 +94,7 @@
     (into-array File (concat extra-jars [library-jar reflect-jar compile-jar]))
     (Option/apply scala-version)))
 
-(defn scala-compilers [scala-instance compiler-bridge-jar]
+(defn scala-compilers [scala-instance]
   (AnalyzingCompiler.
     scala-instance
     (ZincCompilerUtil/constantBridgeProvider
@@ -104,7 +112,18 @@
     (Option/apply nil)
     scala-compilers))
 
-(defn zincInputs "Instantiates zinc inputs." [project inc-options test?]
+(defn options [class-paths sources class-directory scala-options java-options]
+  (CompileOptions/of
+    (into-array String class-paths)
+    (into-array String sources)
+    class-directory
+    (into-array String scala-options)
+    (into-array String java-options)
+    100
+    (reify Function1 (apply [this pos] pos))
+    CompileOrder/Mixed))
+
+(defn zincInputs "Instantiates zinc inputs." [project test?]
   (let [classpath    (classpath/get-classpath-string project)
         {:keys [classes test-classes scalac-options
                 javac-options analysis-cache test-analysis-cache analysis-map
@@ -132,15 +151,38 @@
                                                   (apply [this args]
                                                     args)))
                                (Optional/empty)
-                               (make-array T2 0))]
-    (main/debug "classpath: " (map #(core/to-file %)
-                                   (core/to-seq classpath ":")))
+                               (make-array T2 0))
+        scala-instance (scala-instance (extra-jar project))
+        scala-compilers (scala-compilers scala-instance)
+        compilers (compilers scala-instance scala-compilers)
+        class-paths (map #(core/to-file %)
+                         (core/to-seq classpath ":"))
+        options (options class-paths
+                         (map core/to-file sources)
+                         (core/to-file classes)
+                         scalac-options
+                         javac-options)
+        analysis-store (analysis-store (core/to-file analysis-cache))
+        previous-result (fn [] (if (.isPresent (.get analysis-store))
+                         (PreviousResult/of
+                           (-> analysis-store
+                               .get
+                               .get
+                               .getAnalysis
+                               Optional/of)
+                           (-> analysis-store
+                               .get
+                               .get
+                               .getMiniSetup
+                               Optional/of))
+                         (PreviousResult/of (Optional/empty) (Optional/empty))))]
+    (main/debug "classpath: " class-paths)
     (main/debug "sources: " sources)
     (main/debug "test-sources: " test-sources)
     (main/debug "analysis-cache: " analysis-cache)
     (main/debug "analysis-map: " analysis-map)
 
-    (try (Inputs/of compilers options setup (core/map-kv core/to-file analysis-map))
+    (try (Inputs/of compilers options setup (previous-result))
          (catch Exception e
            (main/abort "Invalid parameter. " (.getMessage e))))))
 
@@ -170,7 +212,7 @@
 (defn- do-compile [project test?]
   (let [logger (zinc-logger project)]
     (try (.compile (zincCompiler)
-                   (zincInputs project (inc-options project) test?) logger)
+                   (zincInputs project test?) logger)
          (catch Exception e (main/info (.getMessage e))))))
 
 (defn zinc-compile "Compiles Java and Scala source." [project]
