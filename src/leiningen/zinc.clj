@@ -155,9 +155,11 @@
         compilers (compilers scala-instance scala-compilers)
         class-paths (map #(core/to-file %)
                          (core/to-seq classpath ":"))
+        source-files (if test? (core/sources-file-seq test-sources)
+                               (core/sources-file-seq sources))
         options (options (conj class-paths (core/to-file classes))
-                         (map #(core/to-file %) sources)
-                         (core/to-file classes)
+                         (map #(core/to-file %) source-files)
+                         (if test? (core/to-file test-classes) (core/to-file classes))
                          scalac-options
                          javac-options)
         analysis-store (analysis-store (core/to-file analysis-cache))
@@ -174,8 +176,8 @@
                                .getMiniSetup
                                Optional/of))
                          (PreviousResult/of (Optional/empty) (Optional/empty))))]
-    (main/debug "classpath: " class-paths)
-    (main/info "sources: " sources)
+    (main/info "classpath: " class-paths)
+    (main/info "sources: " source-files)
     (main/info "test-sources: " test-sources)
     (main/debug "analysis-cache: " analysis-cache)
     (main/debug "analysis-map: " analysis-map)
@@ -251,8 +253,8 @@
                      ['org.scala-lang/scala-library scala-version]
                      ['org.scala-lang/scala-reflect scala-version]
                      ['org.scala-sbt/launcher-interface "1.1.3"]
-                     ['org.scala-sbt/compiler-interface sbt-version
-                      :classifier "sources"]]
+                     ['org.scala-sbt/zinc_2.12 sbt-version]
+                     ['org.scala-sbt/compiler-interface sbt-version]]
      :sbt-version   sbt-version
      :scala-version scala-version
      :fork-java?    fork-java?}))
