@@ -19,7 +19,7 @@
            (java.util.function Function)
            (sbt.internal.util ConsoleLogger)))
 (def ^:dynamic scala-version "2.12.8")
-(def ^:dynamic zinc-version "1.2.5")
+(def ^:dynamic zinc-version "1.3.0-M9")
 
 (def compile-jar
   (core/to-file (lein/maven-local-repo-path
@@ -39,7 +39,7 @@
                   "org.scala-lang/scala-library" scala-version)))
 (def compiler-bridge-jar
   (core/to-file (lein/maven-local-repo-path
-                  "org.scala-sbt/zinc_2.12" zinc-version)))
+                  "org.scala-sbt/compiler-bridge_2.12" zinc-version)))
 (def reflect-jar
   (core/to-file
     (lein/maven-local-repo-path
@@ -119,7 +119,8 @@
     (into-array String java-options)
     100
     (Function/identity)
-    CompileOrder/Mixed))
+    CompileOrder/Mixed
+    (Optional/empty)))
 
 (defn zincInputs "Instantiates zinc inputs." [project test?]
   (let [classpath    (classpath/get-classpath-string project)
@@ -176,9 +177,9 @@
                                .getMiniSetup
                                Optional/of))
                          (PreviousResult/of (Optional/empty) (Optional/empty))))]
-    (main/info "classpath: " class-paths)
-    (main/info "sources: " source-files)
-    (main/info "test-sources: " test-sources)
+    (main/debug "classpath: " class-paths)
+    (main/debug "sources: " source-files)
+    (main/debug "test-sources: " test-sources)
     (main/debug "analysis-cache: " analysis-cache)
     (main/debug "analysis-map: " analysis-map)
 

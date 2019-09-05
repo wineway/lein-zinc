@@ -1,4 +1,4 @@
-(defproject lein-zinc "1.3.15"
+(defproject lein-zinc "1.3.17"
   :description "Typesafe zinc scala incremental compiler plugin"
   :url "https://github.com/k2n/lein-zinc"
   :scm {:name "git"
@@ -10,9 +10,9 @@
                                 [:email "kenjin@clazzsoft.com"]
                                 [:timezone "-8"]]]
   :eval-in-leiningen true
-  :sbt-version "1.2.5"
+  :sbt-version "1.3.0-M9"
   :dependencies [[org.clojure/clojure "1.10.0"]
-                 [org.scala-sbt/zinc_2.12 "1.2.5"]
+                 [org.scala-sbt/zinc_2.12 "1.3.0-M9"]
                  [leiningen "2.9.1"]
                  [org.clojure/tools.namespace  "0.2.10"]]
   :plugins [[lein-expectations "0.0.8"]
